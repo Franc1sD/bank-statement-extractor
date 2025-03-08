@@ -1,68 +1,75 @@
 import React, { useState } from 'react';
-import { Document, Page, pdfjs } from 'react-pdf';
+import * as pdfjsLib from 'pdfjs-dist'; // Version 3.11.174
+import Tesseract from 'tesseract.js';
 
-pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
 
 function BankStatementExtractor() {
     // State variables
-    const [file, setFile] = useState(null);
-    const [numPages, setNumPages] = useState(null);
     const [extractedData, setExtractedData] = useState(null);
-    const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState(null);
     const [pageText, setPageText] = useState([]);
+    const [error, setError] = useState(null);
 
     // Handle file upload
     const handleFileChange = (event) => {
         const selectedFile = event.target.files[0];
-        console.log('Selected file:', selectedFile);
         if (selectedFile && selectedFile.type === 'application/pdf') {
-            setFile(selectedFile);
             setPageText([]);
             setExtractedData(null);
             setError(null);
+            loadPdf(selectedFile)
         } else {
             setError('Please select a valid PDF file');
-            setFile(null);
         }
     };
 
-    // Handle successful PDF document loading
-    const onDocumentLoadSuccess = ({ numPages }) => {
-        setNumPages(numPages);
-        setPageText([]);
-        setIsLoading(true);
-        console.log('PDF loaded successfully. Number of pages:', numPages);
+    // Load the PDF document
+    const loadPdf = async(file) => {
+        try {
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const pdfData = new Uint8Array(e.target.result);
+                const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    await extractTextWithOCR(page, i - 1);
+                }
+                processExtractedText();
+            };
+            reader.readAsArrayBuffer(file);
+        } catch (err) {
+            setError('Error loading PDF: ' + err.message);
+        }
     };
 
-    // Extract text content from each page
-    const onPageLoadSuccess = async (page, pageIndex) => {
+    // Extract text from each page using OCR
+    const extractTextWithOCR = async (page, pageIndex) => {
         try {
-            console.log(`Extracting text from page ${pageIndex + 1}`);
-            const textContent = await page.getTextContent();
-            const pageTextItems = textContent.items.map(item => item.str);
-            const text = pageTextItems.join(' ');
-            console.log(`Page ${pageIndex + 1} text extracted:`, text);
+            const viewport = page.getViewport({ scale: 2 });
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
 
-            // Shallow copy and update
+            const renderContext = {
+                canvasContext: context,
+                viewport: viewport
+            };
+            await page.render(renderContext).promise;
+
+            const{ data: {text: ocrText } } = await Tesseract.recognize(canvas, 'eng');
+            console.log(`OCR text extracted from page ${pageIndex + 1}:`, ocrText);
+
             setPageText(prevPageText => {
                 const newPageText = [...prevPageText];
-                newPageText[pageIndex] = text;
+                newPageText[pageIndex] = ocrText;
                 return newPageText;
             });
-
-            // Loaded all pages
-            if (pageIndex === numPages - 1) {
-                setTimeout(() => {
-                    processExtractedText();
-                    setIsLoading(false);
-                }, 500);
-            }
         } catch (err) {
-            setError('Error extracting text from PDF: ' + err.message);
-            setIsLoading(false);
+            setError('Error extracting text with OCR: ' + err.message);
         }
     };
+
 
     // Process the extracted text
     const processExtractedText = () => {
@@ -89,7 +96,22 @@ function BankStatementExtractor() {
             const depositsMatch = fullText.match(depositsRegex);
             const totalDeposits = depositsMatch ? depositsMatch[1].replace(/,/g, '') : 'Not found';
 
+            // Extract transactions
+            const transactions = [];
+            const transactionRegex = /(\d{2}\/\d{2}|\d{4})\s+([A-Z\s]+(?:PURCHASE|WITHDRAWAL|CHECK|CREDIT|CHARGE)[^\n]*?)\s+(?:(\d+\.\d{2})|)\s+(?:(\d+\.\d{2})|)\s+(\d+\.\d{2})/g;
+            let transMatch;
 
+            while ((transMatch = transactionRegex.exec(fullText)) !== null) {
+                const date = transMatch[1];
+                const description = transMatch[2].trim();
+                const amount = transMatch[3];
+
+                transactions.push({
+                    date,
+                    description,
+                    amount
+                });
+            }
 
 
 
@@ -107,24 +129,7 @@ function BankStatementExtractor() {
 
 
 
-            // All transactions
-            const transactions = [];
-
-            // Match transaction lines with Date, Description, and Amount
-            const transactionRegex = /(\d{2}\/\d{2}|\d{4})\s+([A-Z\s]+(?:PURCHASE|WITHDRAWAL|CHECK|CREDIT|CHARGE)[^\n]*?)\s+(?:(\d+\.\d{2})|)\s+(?:(\d+\.\d{2})|)\s+(\d+\.\d{2})/g;
-            let transMatch;
-
-            while ((transMatch = transactionRegex.exec(fullText)) !== null) {
-                const date = transMatch[1];
-                const description = transMatch[2].trim();
-                const amount = transMatch[3];
-
-                transactions.push({
-                    date,
-                    description,
-                    amount
-                });
-            }
+            
 
             // Calculate total ATM withdrawals
             const atmWithdrawals = transactions.filter(t =>
@@ -169,10 +174,11 @@ function BankStatementExtractor() {
         }
     };
 
+
+
     return (
         <div className="bank-statement-extractor">
             <h1>Bank Statement Extractor</h1>
-
             {/* File upload section */}
             <div className="upload-section">
                 <input
@@ -183,16 +189,12 @@ function BankStatementExtractor() {
                 />
                 <label htmlFor="pdf-upload">Upload Bank Statement (PDF)</label>
             </div>
-
             {/* Error and loading states */}
             {error && <div className="error-message">{error}</div>}
-            {isLoading && <div className="loading">Processing PDF...</div>}
-
             {/* Results display */}
-            {extractedData && !isLoading && (
+            {extractedData && (
                 <div className="results">
                     <h2>Extracted Information</h2>
-
                     <div className="info-grid">
                         <div className="info-card">
                             <h3>Account Details</h3>
@@ -200,7 +202,6 @@ function BankStatementExtractor() {
                             <p>Account #: {extractedData.accountNumber}</p>
                             <p>Address: {extractedData.address}</p>
                         </div>
-
                         <div className="info-card">
                             <h3>Summary</h3>
                             <p>Total Deposits: ${extractedData.totalDeposits}</p>
@@ -208,7 +209,6 @@ function BankStatementExtractor() {
                             <p>Walmart Purchases: {extractedData.walmartPurchases.length}</p>
                         </div>
                     </div>
-
                     {/* Transactions Table */}
                     <h3>Recent Transactions</h3>
                     <div className="table-container">
@@ -233,26 +233,9 @@ function BankStatementExtractor() {
                     </div>
                 </div>
             )}
-
-            {/* PDF Preview - Simplified, shows only first page */}
-            {file && !isLoading && (
-                <div className="pdf-preview">
-                    <h3>PDF Preview (Page 1)</h3>
-                    <Document
-                        file={file}
-                        onLoadSuccess={onDocumentLoadSuccess}
-                        onLoadError={(error) => setError('Error loading PDF: ' + error.message)}
-                    >
-                        <Page
-                            pageNumber={1}
-                            onLoadSuccess={(page) => onPageLoadSuccess(page, 0)}
-                            width={400}
-                        />
-                    </Document>
-                </div>
-            )}
         </div>
     );
-}
+};
+
 
 export default BankStatementExtractor;
