@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 
-// Set up the worker for pdf.js
-pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
+pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js`;
 
 function BankStatementExtractor() {
     // State variables
@@ -16,6 +15,7 @@ function BankStatementExtractor() {
     // Handle file upload
     const handleFileChange = (event) => {
         const selectedFile = event.target.files[0];
+        console.log('Selected file:', selectedFile);
         if (selectedFile && selectedFile.type === 'application/pdf') {
             setFile(selectedFile);
             setPageText([]);
@@ -32,14 +32,17 @@ function BankStatementExtractor() {
         setNumPages(numPages);
         setPageText([]);
         setIsLoading(true);
+        console.log('PDF loaded successfully. Number of pages:', numPages);
     };
 
     // Extract text content from each page
     const onPageLoadSuccess = async (page, pageIndex) => {
         try {
+            console.log(`Extracting text from page ${pageIndex + 1}`);
             const textContent = await page.getTextContent();
             const pageTextItems = textContent.items.map(item => item.str);
             const text = pageTextItems.join(' ');
+            console.log(`Page ${pageIndex + 1} text extracted:`, text);
 
             // Shallow copy and update
             setPageText(prevPageText => {
