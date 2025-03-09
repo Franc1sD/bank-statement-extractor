@@ -75,6 +75,7 @@ function BankStatementExtractor() {
         }
     };
 
+    // Making sure all pages are processed before extraction
     useEffect(() => {
         if (processedPages === numPages && numPages > 0) {
             console.log('All pages processed.');
@@ -87,98 +88,34 @@ function BankStatementExtractor() {
     const processExtractedText = () => {
         const fullText = pageText.join(' ');
         console.log('Full extracted text:', fullText);
+
         try {
-            // Extract customer name
-            const nameRegex = /([A-Z]+\s+[A-Z]\.\s+[A-Z]+)/;
-            const nameMatch = fullText.match(nameRegex);
+            // Name
+            const nameMatch = fullText.match(/([A-Z]+\s+[A-Z]\.\s+[A-Z]+)/);
             const customerName = nameMatch ? nameMatch[1].trim() : 'Not found';
-
-            // Extract address
-            const addressRegex = /(\d+\s+[A-Z]+\s+[\r\n\s]+[A-Z]+\s+,\s+USA\s+\d{5})/;
-            const addressMatch = fullText.match(addressRegex);
-            const address = addressMatch ? addressMatch[1].replace(/\s+/g, ' ').trim() : 'Not found';
-
-            // Extract account number
-            const accountNumberRegex = /Account\s+#\s*(\d+)/i;
-            const accountMatch = fullText.match(accountNumberRegex);
+            // Account Number
+            const accountMatch = fullText.match(/Account\s+#\s*(\d+)/i);
             const accountNumber = accountMatch ? accountMatch[1] : 'Not found';
-
-            // Extract total deposits
-            const depositsRegex = /\+\s*Deposits\s+and\s+other\s+credits\s+\$([0-9,]+\.\d{2})/i;
-            const depositsMatch = fullText.match(depositsRegex);
-            const totalDeposits = depositsMatch ? depositsMatch[1].replace(/,/g, '') : 'Not found';
-
-            // Extract all transactions
-            const transactionRegex = /(\d{2}\/\d{2})\s+([A-Z\s]+(?:PURCHASE|WITHDRAWAL|CHECK|CREDIT|CHARGE)[^\n]*?)\s+([\d,]+\.\d{2})/g;
-            const transactions = [];
-            let transMatch;
-
-            while ((transMatch = transactionRegex.exec(fullText)) !== null) {
-                const date = transMatch[1];
-                const description = transMatch[2].trim();
-                const amount = transMatch[3].replace(/,/g, ''); // Remove commas for consistency
-
-                transactions.push({
-                    date,
-                    description,
-                    amount: parseFloat(amount).toFixed(2), // Ensure amount is a number with 2 decimal places
-                });
-            }
+            // Address
+            const addressMatch = fullText.match(/(\d+\s+[A-Z]+\s+DRIVE[\r\n\s]+[A-Z]+\s+CITY,\s+USA\s+\d{5})/);
+            const address = addressMatch ? addressMatch[1]
+                .replace(/[\r\n]+/g, ', ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                : 'Not found';
 
 
-
-            // // Extract beginning balance
-            // const beginningBalanceRegex = /Beginning\s+balance\s+on\s+[A-Za-z]+\s+\d+\s+\$(\d+\.\d+)/i;
-            // const beginningBalanceMatch = fullText.match(beginningBalanceRegex);
-            // const beginningBalance = beginningBalanceMatch ? beginningBalanceMatch[1] : 'Not found';
-
-            // // Extract ending balance
-            // const endingBalanceRegex = /Ending\s+balance\s+on\s+[A-Za-z]+\s+\d+\s+\$(\d+\.\d+)/i;
-            // const endingBalanceMatch = fullText.match(endingBalanceRegex);
-            // const endingBalance = endingBalanceMatch ? endingBalanceMatch[1] : 'Not found';
-
-
-
-
-
-
-
-            // Calculate total ATM withdrawals
-            const atmWithdrawals = transactions.filter(t =>
-                t.description.toUpperCase().includes('ATM') &&
-                t.description.toUpperCase().includes('WITHDRAWAL')
-            );
-
-            const totalAtmWithdrawals = atmWithdrawals.reduce(
-                (sum, t) => sum + parseFloat(t.amount),
-                0
-            ).toFixed(2);
-
-            // Extract Walmart purchases
-            const walmartRegex = /(\d{2}\/\d{2})\s+POS\s+PURCHASE.*?WAL[\s-]*MART.*?\s+([\d,]+\.\d{2})/gi;
-            const walmartPurchases = [];
-            let walmartMatch;
-
-            while ((walmartMatch = walmartRegex.exec(fullText)) !== null) {
-                const date = walmartMatch[1];
-                const amount = walmartMatch[2].replace(/,/g, ''); // Remove commas for consistency
-
-                walmartPurchases.push({
-                    date,
-                    description: 'Walmart Purchase',
-                    amount: parseFloat(amount).toFixed(2), // Ensure amount is a number with 2 decimal places
-                });
-            }
-
+            // Transactions
+            
             // Set the extracted data in state with additional information
             setExtractedData({
                 customerName,
                 address,
                 accountNumber,
-                totalDeposits,
-                totalAtmWithdrawals,
-                walmartPurchases,
-                transactions: transactions.slice(0, 10), // Limit to 10 transactions for display
+                // totalDeposits,
+                // totalATMWithdrawals,
+                // walmartPurchases,
+                // transactions: uniqueTransactions.slice(0, 10),
             });
         } catch (err) {
             setError('Error processing text: ' + err.message);
