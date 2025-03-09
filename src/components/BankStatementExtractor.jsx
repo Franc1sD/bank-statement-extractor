@@ -157,16 +157,24 @@ function BankStatementExtractor() {
                 .trim()
                 : 'Not found';
 
+            // Total Deposits
+            const depositsMatch = fullText.match(/Deposits and other credits\s+\$([\d,]+\.\d{2})/);
+            const totalDeposits = depositsMatch ? parseFloat(depositsMatch[1].replace(/,/g, '')) : 0;
 
-            // Transactions
+
+            // All Transactions
             const transactions = parseTransactions(fullText);
 
-            // Set the extracted data in state with additional information
+
+
+
+            
+            // Set extracted data
             setExtractedData({
                 customerName,
                 address,
                 accountNumber,
-                // totalDeposits,
+                totalDeposits,
                 // totalATMWithdrawals,
                 // walmartPurchases,
                 transactions,
@@ -175,6 +183,13 @@ function BankStatementExtractor() {
             setError('Error processing text: ' + err.message);
         }
     };
+
+
+
+
+
+
+
 
 
 
@@ -204,12 +219,12 @@ function BankStatementExtractor() {
                             <p>Account #: {extractedData.accountNumber}</p>
                             <p>Address: {extractedData.address}</p>
                         </div>
-                        {/* <div className="info-card">
+                        <div className="info-card">
                             <h3>Summary</h3>
                             <p>Total Deposits: ${extractedData.totalDeposits}</p>
-                            <p>ATM Withdrawals: ${extractedData.totalAtmWithdrawals}</p>
-                            <p>Walmart Purchases: {extractedData.walmartPurchases.length}</p>
-                        </div> */}
+                            {/* <p>ATM Withdrawals: ${extractedData.totalAtmWithdrawals}</p>
+                            <p>Walmart Purchases: {extractedData.walmartPurchases.length}</p> */}
+                        </div>
                     </div>
                     {/* Transactions Table */}
                     <h3>Recent Transactions</h3>
