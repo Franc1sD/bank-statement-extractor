@@ -1,6 +1,10 @@
+// Author: Francis Deng
+// Version: 1.0
+
 import React, { useState, useEffect } from 'react';
 import * as pdfjsLib from 'pdfjs-dist'; // Version 3.11.174
 import Tesseract from 'tesseract.js';
+import './BankStatementExtractor.css';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
 
@@ -10,12 +14,14 @@ function BankStatementExtractor() {
     const [numPages, setNumPages] = useState(null);
     const [processedPages, setProcessedPages] = useState(0);
     const [pageText, setPageText] = useState([]);
+    const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
 
     // Handle file upload
     const handleFileChange = (event) => {
         const selectedFile = event.target.files[0];
         if (selectedFile && selectedFile.type === 'application/pdf') {
+            setIsLoading(true);
             loadPdf(selectedFile)
             setPageText([]);
             setExtractedData(null);
@@ -43,6 +49,7 @@ function BankStatementExtractor() {
             reader.readAsArrayBuffer(file);
         } catch (err) {
             setError('Error loading PDF: ' + err.message);
+            setIsLoading(false);
         }
     };
 
@@ -78,8 +85,8 @@ function BankStatementExtractor() {
     // Making sure all pages are processed before extraction
     useEffect(() => {
         if (processedPages === numPages && numPages > 0) {
-            console.log('All pages processed.');
             processExtractedText();
+            setIsLoading(false);
         }
     }, [processedPages, numPages]);
 
@@ -87,62 +94,81 @@ function BankStatementExtractor() {
 
 
 
-    // Extract all transactions:
+    // Extract all transactions by date
     const parseTransactions = (text) => {
-        // Transactions by date
         const transactionSection = text.match(/Account Transactions by date[\s\S]*?(?=Account Transactions by type|$)/);
 
-        if (!transactionSection) {
+        const transactionTypeSection = text.match(/Account Transactions by type[\s\S]*?(?=Checks Paid|$)/);
+
+        if (!transactionSection || !transactionTypeSection) {
             return [];
         }
 
         const lines = transactionSection[0].split('\n');
-        const parsedTransactions = [];
-        const uniqueKeys = new Set();
+        const typeLines = transactionTypeSection[0].split('\n');
+        const transactionMap = new Map();
+
+        // Helper Function
+        const parseLine = (line, isTypeSection = false) => {
+            const regex = isTypeSection
+                ? /(\d{2}\/\d{2})\s+(.*?)\s+(-?\d*\.?\d{1,2})$/
+                : /(\d{2}\/\d{2})\s+(.*?)\s+(-?\d*\.?\d{1,2})\s+(-?\d*\.?\d{1,2})$/;
+
+            const match = line.match(regex);
+            if (match) {
+                const [_, date, rawDescription, amount, balance] = match;
+                const description = rawDescription.trim();
+                const isCredit = /CREDIT|INTEREST|DEPOSIT/i.test(description);
+                const balanceValue = balance ? parseFloat(balance) : null;
+                const amountValue = isCredit ? -parseFloat(amount) : parseFloat(amount);
+
+                const transactionKey = `${date}-${amountValue.toFixed(2)}`;
+                if (isTypeSection) {
+                    if (transactionMap.has(transactionKey)) {
+                        console.log(transactionKey)
+                        const existingTransaction = transactionMap.get(transactionKey);
+                        existingTransaction.description = `${description}`;
+                    }
+                } else {
+                    if (!transactionMap.has(transactionKey)) {
+                        transactionMap.set(transactionKey, {
+                            date,
+                            description,
+                            amountValue,
+                            balanceValue,
+                        });
+                    }
+                }
+            }
+        };
 
         for (const line of lines) {
             if (!line.trim() || line.includes('Date Description') ||
                 line.includes('Activity for Relationship') || line.includes('Account Transactions by date')) {
                 continue;
             }
-
-            // Pattern looks for: date, description, possibly debit, possibly credit, and balance
-            const match = line.match(/(\d{2}\/\d{2})\s+(.*?)(?:\s+(-?\d*\.?\d{1,2}))?(?:\s+(-?\d*\.?\d{1,2}))?$/);
-
-            if (match) {
-                const [_, date, rawDescription, amount, balance] = match;
-                const description = rawDescription.trim();
-
-                // Determine transaction type and amount
-                const amountValue = parseFloat(amount);
-                const balanceValue = parseFloat(balance);
-                const isCredit = /CREDIT|INTEREST|DEPOSIT/i.test(description);
-
-                // Create unique key for this transaction
-                const transactionKey = `${date}-${amountValue.toFixed(2)}-${isCredit}`;
-
-                // Only add if we haven't seen this transaction before
-                if (!uniqueKeys.has(transactionKey)) {
-                    uniqueKeys.add(transactionKey);
-
-                    parsedTransactions.push({
-                        date,
-                        description,
-                        amount: isCredit ? -amountValue : amountValue,
-                        balance: balanceValue,
-                    });
-                }
-            }
+            parseLine(line);
         }
-        return parsedTransactions;
+
+        for (const line of typeLines) {
+            if (!line.trim() || line.includes('Date Description') ||
+                line.includes('Deposits and Other Credits') || line.includes('Withdrawals and Other Debits') || line.includes('Check Images for Relationship Checking')) {
+                continue;
+            }
+            parseLine(line, true);
+        }
+
+        return Array.from(transactionMap.values());
     };
+
 
     // Process the extracted text
     const processExtractedText = () => {
         const fullText = pageText.join(' ');
-        console.log('Full extracted text:', fullText);
-
         try {
+            // All Transactions
+            const transactions = parseTransactions(fullText);
+
             // Name
             const nameMatch = fullText.match(/([A-Z]+\s+[A-Z]\.\s+[A-Z]+)/);
             const customerName = nameMatch ? nameMatch[1].trim() : 'Not found';
@@ -161,22 +187,24 @@ function BankStatementExtractor() {
             const depositsMatch = fullText.match(/Deposits and other credits\s+\$([\d,]+\.\d{2})/);
             const totalDeposits = depositsMatch ? parseFloat(depositsMatch[1].replace(/,/g, '')) : 0;
 
+            // ATM Withdrawals
+            const totalATMWithdrawals = transactions
+                .filter(transaction => /ATM WITHDRAWAL/i.test(transaction.description))
+                .reduce((sum, transaction) => sum + transaction.amountValue, 0);
 
-            // All Transactions
-            const transactions = parseTransactions(fullText);
+            // Walmart Purchases
+            const walmartPurchases = transactions.filter(transaction =>
+                /WAL-MART/i.test(transaction.description));
 
 
-
-
-            
             // Set extracted data
             setExtractedData({
                 customerName,
                 address,
                 accountNumber,
                 totalDeposits,
-                // totalATMWithdrawals,
-                // walmartPurchases,
+                totalATMWithdrawals,
+                walmartPurchases,
                 transactions,
             });
         } catch (err) {
@@ -208,6 +236,13 @@ function BankStatementExtractor() {
             </div>
             {/* Error and loading states */}
             {error && <div className="error-message">{error}</div>}
+            {/* Loading indicator */}
+            {isLoading && (
+                <div className="loading-indicator">
+                    <div className="spinner"></div>
+                    <p>Processing PDF... Please wait.</p>
+                </div>
+            )}
             {/* Results display */}
             {extractedData && (
                 <div className="results">
@@ -222,9 +257,30 @@ function BankStatementExtractor() {
                         <div className="info-card">
                             <h3>Summary</h3>
                             <p>Total Deposits: ${extractedData.totalDeposits}</p>
-                            {/* <p>ATM Withdrawals: ${extractedData.totalAtmWithdrawals}</p>
-                            <p>Walmart Purchases: {extractedData.walmartPurchases.length}</p> */}
+                            <p>ATM Withdrawals: ${extractedData.totalATMWithdrawals}</p>
                         </div>
+                    </div>
+                    {/* Walmart Transactions Table */}
+                    <h3>Walmart Transactions</h3>
+                    <div className="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Description</th>
+                                    <th>Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {extractedData.walmartPurchases.map((transaction, index) => (
+                                    <tr key={index}>
+                                        <td>{transaction.date}</td>
+                                        <td>{transaction.description}</td>
+                                        <td>${transaction.amountValue}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
                     {/* Transactions Table */}
                     <h3>Recent Transactions</h3>
@@ -242,7 +298,7 @@ function BankStatementExtractor() {
                                     <tr key={index}>
                                         <td>{transaction.date}</td>
                                         <td>{transaction.description}</td>
-                                        <td>${transaction.amount}</td>
+                                        <td>${transaction.amountValue}</td>
                                     </tr>
                                 ))}
                             </tbody>
