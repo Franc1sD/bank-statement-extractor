@@ -49,7 +49,7 @@ function BankStatementExtractor() {
     // Extract text from each page using OCR
     const extractTextWithOCR = async (page, pageIndex) => {
         try {
-            const viewport = page.getViewport({ scale: 2 });
+            const viewport = page.getViewport({ scale: 6 });
             const canvas = document.createElement('canvas');
             const context = canvas.getContext('2d');
             canvas.height = viewport.height;
@@ -84,6 +84,59 @@ function BankStatementExtractor() {
     }, [processedPages, numPages]);
 
 
+
+
+
+    // Extract all transactions:
+    const parseTransactions = (text) => {
+        // Transactions by date
+        const transactionSection = text.match(/Account Transactions by date[\s\S]*?(?=Account Transactions by type|$)/);
+
+        if (!transactionSection) {
+            return [];
+        }
+
+        const lines = transactionSection[0].split('\n');
+        const parsedTransactions = [];
+        const uniqueKeys = new Set();
+
+        for (const line of lines) {
+            if (!line.trim() || line.includes('Date Description') ||
+                line.includes('Activity for Relationship') || line.includes('Account Transactions by date')) {
+                continue;
+            }
+
+            // Pattern looks for: date, description, possibly debit, possibly credit, and balance
+            const match = line.match(/(\d{2}\/\d{2})\s+(.*?)(?:\s+(-?\d*\.?\d{1,2}))?(?:\s+(-?\d*\.?\d{1,2}))?$/);
+
+            if (match) {
+                const [_, date, rawDescription, amount, balance] = match;
+                const description = rawDescription.trim();
+
+                // Determine transaction type and amount
+                const amountValue = parseFloat(amount);
+                const balanceValue = parseFloat(balance);
+                const isCredit = /CREDIT|INTEREST|DEPOSIT/i.test(description);
+
+                // Create unique key for this transaction
+                const transactionKey = `${date}-${amountValue.toFixed(2)}-${isCredit}`;
+
+                // Only add if we haven't seen this transaction before
+                if (!uniqueKeys.has(transactionKey)) {
+                    uniqueKeys.add(transactionKey);
+
+                    parsedTransactions.push({
+                        date,
+                        description,
+                        amount: isCredit ? -amountValue : amountValue,
+                        balance: balanceValue,
+                    });
+                }
+            }
+        }
+        return parsedTransactions;
+    };
+
     // Process the extracted text
     const processExtractedText = () => {
         const fullText = pageText.join(' ');
@@ -106,7 +159,8 @@ function BankStatementExtractor() {
 
 
             // Transactions
-            
+            const transactions = parseTransactions(fullText);
+
             // Set the extracted data in state with additional information
             setExtractedData({
                 customerName,
@@ -115,7 +169,7 @@ function BankStatementExtractor() {
                 // totalDeposits,
                 // totalATMWithdrawals,
                 // walmartPurchases,
-                // transactions: uniqueTransactions.slice(0, 10),
+                transactions,
             });
         } catch (err) {
             setError('Error processing text: ' + err.message);
@@ -150,12 +204,12 @@ function BankStatementExtractor() {
                             <p>Account #: {extractedData.accountNumber}</p>
                             <p>Address: {extractedData.address}</p>
                         </div>
-                        <div className="info-card">
+                        {/* <div className="info-card">
                             <h3>Summary</h3>
                             <p>Total Deposits: ${extractedData.totalDeposits}</p>
                             <p>ATM Withdrawals: ${extractedData.totalAtmWithdrawals}</p>
                             <p>Walmart Purchases: {extractedData.walmartPurchases.length}</p>
-                        </div>
+                        </div> */}
                     </div>
                     {/* Transactions Table */}
                     <h3>Recent Transactions</h3>
